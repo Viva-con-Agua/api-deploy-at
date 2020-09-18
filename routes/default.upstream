@@ -1,0 +1,3 @@
+upstream payment-backend {
+  server payment-backend:1323;
+}

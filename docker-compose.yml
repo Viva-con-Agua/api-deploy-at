@@ -1,0 +1,25 @@
+
+version: '3'
+
+services:
+    nginx:
+        image: nginx
+        restart: unless-stopped
+        volumes:
+            - ./routes/:/etc/nginx/conf.d/
+        networks:
+            pool:
+                ipv4_address: 172.2.61.1
+            app:
+
+networks:
+     pool:
+        external:
+            name: pool-network
+
+     app:
+         ipam:
+            driver: default
+            config:
+                - subnet: "172.3.16.0/21"
+

@@ -1,0 +1,205 @@
+#!/bin/bash
+
+####
+# Deployment scripts for stage
+##
+
+##
+# Pull a specific repository, update the corresponding docker
+##
+
+dir=$(pwd)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+if [ -f ".env" ]; then
+    source .env
+else
+    branch="develop"
+    editor="nvim"
+    workdir="./"
+fi
+
+copy_config() {
+    cp -r ${workdir}/${1}/config/${1} ${REPO_CONFIG_PATH}/
+}
+
+install_docker() {
+    cd ${workdir} &&
+    git clone -b ${branch} https://github.com/Viva-con-Agua/${1}.git && 
+    mkdir -p ../config/${1} &&
+    cp -r ${1}/config/* ../config/${1}/
+    cd .. &&
+    ${editor} docker-compose.yml &&
+    ${editor} routes/location.${2} &&
+    ${editor} routes/default.upstream &&
+    if docker-compose config --services | grep -q '${1}_db'; then
+        ${editor} config/${1}/config.yml &&
+        ${editor} config/${1}/database.env
+    else
+        ${editor} config/${1}/config.yml 
+    fi
+}
+##
+# Nginx
+##
+nginx_restart() {
+    #restart nginx
+    docker-compose restart nginx-api 
+}
+
+nginx_add_upstream() {
+
+
+    echo "" >> routes/default.upstream
+    echo "upstream ${1} {" >> routes/default.upstream
+    echo "  server ${2};" >> routes/default.upstream
+    echo "}" >> routes/default.upstream
+}
+
+nginx_add_subpath() {
+
+    echo -e "${GREEN}START INSERT LOCATION ${NC}"
+    echo "input :q for finish"
+    while true; do
+        read -p "Please input: " path_input
+        echo $path_input
+        if [ "$path_input" == ":q" ] 
+        then
+            echo -e "${GREEN} QUIT INSERT LOCATION${NC}"
+            break
+        else
+            if grep -Fwq "/v1/${path_input}" routes/location.v1
+            then
+                echo -e "${RED}ERROR: ${NC}location already exsists"
+            else
+            
+            echo "" >> routes/location.v1
+            echo "location /v1/${path_input} {" >> routes/location.v1
+            echo "  proxy_pass http://${1};" >> routes/location.v1
+            echo "}" >> routes/location.v1
+            fi
+        fi
+    done
+}
+
+nginx_add_docker(){
+    ## upstream
+    echo -e "${GREEN}### START SCRIPT ###"
+    if grep -Fq "${1}" routes/default.upstream
+    then
+        echo -e "${RED}ERROR: ${NC}service already exsists"
+    else
+        echo ""
+        echo -e "${GREEN}STEP_1: ${NC} add upstream to config"
+        nginx_add_upstream $1 $2
+        echo -e "${GREEN}STEP_2: ${NC} add location to config"
+        nginx_add_subpath $1 
+        echo -e "${GREEN}STEP_1: ${NC} restart nginx"
+    fi
+}
+
+##
+# Api Docker
+##
+setup_docker() {
+    # change directory to backend-app folder
+    cd ${workdir}/${1} &&
+		ls &&
+        # build and run docker
+   docker-compose --env-file ${dir}/.env up -d --build       
+}
+
+update_docker() {
+    # change directory to backend-app folder
+    cd ${workdir}/${1} &&
+    # pull from github
+    git pull &&
+    # build and run docker
+    docker-compose --env-file ${dir}/.env up -d --build app
+}
+delete_docker() {
+    # change directory to backend-app folder
+    cd ${workdir}/${1} &&
+    # pull from github
+    git pull &&
+    # build and run docker
+    docker-compose --env-file ${dir}/.env rm -s -f
+}
+
+
+##
+# Remove docker and restart it
+##
+reup_docker(){
+    docker-compose rm -s $1 && docker-compose up -d $1;
+}
+
+remove_database(){
+	  # change directory to backend-app folder
+    cd ${workdir}/${1} &&
+		ls &&
+        # build and run docker
+   docker-compose --env-file ${dir}/.env rm -s -f db   
+}
+
+##
+# Restart docker
+##
+restart_docker(){
+    docker-compose restart $1;
+}
+
+restore_docker(){
+    docker exec -i ${1}-db sh -c 'exec mysql -uroot -pyes auth' < ${2}
+}
+
+##
+# Print Api help
+##
+help(){
+    echo "Usage: ./please <command> <serviceName / version>"
+    echo " install <serviceName> <apiVersion>    # install backend docker"
+    echo " setup <serviceName>                   # setup service"
+    echo " setup_all                             # setup all services"
+    echo " update <serviceName>                  # pull the 'develop' branches, build and setup docker and push docker into 'develop'"
+    echo " restart <serviceName>                 # delete and set up service"
+    echo " reup <serviceName>                    # remove and restart docker"
+}
+
+##
+# Main
+##
+command_nginx() {
+    case $1 in
+        service) nginx_add_docker $2 $3;;
+        location) nginx_add_subpath $2 $3;;
+    esac
+}
+
+command_docker() {
+    case $1 in
+        install) install_docker $2 $3;;
+        setup) setup_docker $2;;
+        setup_all) setup_all;;
+        update) update_docker $2;;
+        restart) restart_docker $2;;
+        reup) reup_docker $2 $3;;
+        restore) restore_docker $2 $3;;
+				delete ) delete_docker $2;;
+
+        *) help
+    esac
+}
+command_database() {
+	case $1 in
+		rm) remove_database $2;;
+	esac
+}
+
+case $1 in
+		db) command_database $2 $3 $4;;
+    nginx ) command_nginx $2 $3 $4 $5;;
+    docker) command_docker $2 $3 $4;;
+    copyConfig) copy_config $2;;
+esac
